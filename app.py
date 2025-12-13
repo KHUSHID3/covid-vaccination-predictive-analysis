@@ -1,104 +1,251 @@
+# ===============================
+# COVID-19 Vaccination Predictive Analysis
+# Full EDA + PCA + Regression + Clustering
+# ===============================
+
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import numpy as np
 
-st.set_page_config(page_title="COVID Vaccination Predictive Analysis", layout="wide")
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.cluster import KMeans
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from xgboost import XGBRegressor
+from statsmodels.stats.outliers_influence import variance_inflation_factor
 
-# ================= TITLE =================
+# -------------------------------
+# PAGE CONFIG
+# -------------------------------
+st.set_page_config(
+    page_title="COVID Vaccination Predictive Analysis",
+    layout="wide"
+)
+
 st.title("COVID-19 Vaccination Predictive Analysis")
-st.write("EDA, PCA, Regression and Clustering based analysis")
+st.write("EDA, Regression, PCA & Clustering using Machine Learning")
 
-# ================= LOAD DATA =================
-df = pd.read_csv("COVID-19_Vaccinations_by_Age_and_Race-Ethnicity_-_Historical.csv")
+# -------------------------------
+# LOAD DATA
+# -------------------------------
+@st.cache_data
+def load_data():
+    df = pd.read_csv(
+        "COVID-19_Vaccinations_by_Age_and_Race-Ethnicity_-_Historical.csv"
+    )
+    return df
 
-# ================= DATASET PREVIEW =================
-st.header("Dataset Preview")
+df = load_data()
+
+st.subheader("Dataset Preview")
 st.dataframe(df.head())
 
-# ================= EDA =================
-st.header("Exploratory Data Analysis (EDA)")
+# -------------------------------
+# DATA CLEANING
+# -------------------------------
+df["Week End"] = pd.to_datetime(df["Week End"], errors="coerce")
+df = df.dropna(subset=["Week End"])
+df = df.fillna(0)
 
-# Distribution
-st.subheader("Distribution of 1st Dose Vaccination")
-fig1, ax1 = plt.subplots()
-sns.histplot(df["1st Dose"].dropna(), bins=30, kde=True, ax=ax1)
-st.pyplot(fig1)
+# -------------------------------
+# EDA SECTION
+# -------------------------------
+st.header("📊 Exploratory Data Analysis (EDA)")
 
-# Age Group comparison
-st.subheader("Average 1st Dose by Age Group")
-age_avg = df.groupby("Age Group")["1st Dose"].mean().sort_values()
-fig2, ax2 = plt.subplots()
-age_avg.plot(kind="barh", ax=ax2)
-st.pyplot(fig2)
+# ---- Monthly Trend
+st.subheader("Monthly Trend of 1st Dose Vaccination")
+df_sorted = df.sort_values("Week End")
+df_sorted["Month"] = df_sorted["Week End"].dt.to_period("M")
+monthly = df_sorted.groupby("Month")["1st Dose"].sum()
 
-# Race/Ethnicity comparison
-st.subheader("Average 1st Dose by Race/Ethnicity")
-race_avg = df.groupby("Race/Ethnicity")["1st Dose"].mean().sort_values()
-fig3, ax3 = plt.subplots()
-race_avg.plot(kind="barh", ax=ax3)
-st.pyplot(fig3)
+fig, ax = plt.subplots(figsize=(10,4))
+ax.plot(monthly.index.astype(str), monthly.values, marker="o")
+ax.set_xlabel("Month")
+ax.set_ylabel("Total 1st Dose")
+ax.set_title("Monthly Trend of 1st Dose Vaccinations")
+plt.xticks(rotation=45)
+st.pyplot(fig)
 
-# Correlation Heatmap
-st.subheader("Correlation Heatmap")
-numeric_df = df.select_dtypes(include=["float64", "int64"])
-fig4, ax4 = plt.subplots(figsize=(8,6))
-sns.heatmap(numeric_df.corr(), cmap="coolwarm", annot=False, ax=ax4)
-st.pyplot(fig4)
+# ---- Age Group Bar Plot
+st.subheader("Vaccination by Age Group")
+age_data = df.groupby("Age Group")["1st Dose"].sum().sort_values()
 
-# ================= PCA =================
-st.header("Principal Component Analysis (PCA)")
-st.write("PCA reduces dimensionality while retaining maximum variance.")
+fig, ax = plt.subplots(figsize=(8,4))
+sns.barplot(x=age_data.values, y=age_data.index, ax=ax)
+ax.set_title("1st Dose by Age Group")
+st.pyplot(fig)
 
-# Explained variance (static from analysis)
-fig5, ax5 = plt.subplots()
-ax5.plot([1,2,3,4,5], [0.45, 0.65, 0.78, 0.88, 0.94], marker="o")
-ax5.set_xlabel("Number of Components")
-ax5.set_ylabel("Cumulative Explained Variance")
-ax5.grid()
-st.pyplot(fig5)
+# ---- Race/Ethnicity Bar Plot
+st.subheader("Vaccination by Race / Ethnicity")
+race_data = df.groupby("Race/Ethnicity")["1st Dose"].sum().sort_values()
 
-# PCA 2D scatter (illustrative)
-fig6, ax6 = plt.subplots()
-ax6.scatter(range(200), range(200), s=10, alpha=0.6)
-ax6.set_xlabel("PC1")
-ax6.set_ylabel("PC2")
-st.pyplot(fig6)
+fig, ax = plt.subplots(figsize=(8,4))
+sns.barplot(x=race_data.values, y=race_data.index, ax=ax)
+ax.set_title("1st Dose by Race/Ethnicity")
+st.pyplot(fig)
 
-# ================= REGRESSION RESULTS =================
-st.header("Supervised Learning – Regression Results")
+# -------------------------------
+# OUTLIER ANALYSIS
+# -------------------------------
+st.header("🚨 Outlier Analysis")
 
-st.subheader("Linear Regression")
-st.markdown("""
-- **MAE:** 2533.89  
-- **RMSE:** 4312.82  
-- **R² Score:** 0.99
-""")
+Q1 = df["1st Dose"].quantile(0.25)
+Q3 = df["1st Dose"].quantile(0.75)
+IQR = Q3 - Q1
 
-st.subheader("XGBoost Regression")
-st.markdown("""
-- **MAE:** 413.37  
-- **RMSE:** 1242.62  
-- **R² Score:** 0.999
-""")
+lower = Q1 - 1.5 * IQR
+upper = Q3 + 1.5 * IQR
 
-# ================= CLUSTERING =================
-st.header("Unsupervised Learning – Clustering")
+outliers = df[(df["1st Dose"] < lower) | (df["1st Dose"] > upper)]
+df_clean = df[(df["1st Dose"] >= lower) & (df["1st Dose"] <= upper)]
 
-st.subheader("Elbow Method (K-Means)")
-fig7, ax7 = plt.subplots()
-ax7.plot([1,2,3,4,5,6], [8200, 4300, 2100, 1800, 1600, 1500], marker="o")
-ax7.set_xlabel("Number of Clusters (K)")
-ax7.set_ylabel("Inertia")
-st.pyplot(fig7)
+st.write(f"Total outliers detected: **{len(outliers)}**")
 
-st.subheader("Cluster-wise Summary (KMeans)")
-cluster_summary = pd.DataFrame({
-    "Cluster": ["Cluster 0", "Cluster 1", "Cluster 2"],
-    "Vaccination Level": ["High", "Medium", "Low"]
-})
-st.table(cluster_summary)
+# ---- Scatter with outliers
+fig, ax = plt.subplots(figsize=(10,4))
+ax.scatter(df_clean.index, df_clean["1st Dose"], s=10, label="Normal", alpha=0.6)
+ax.scatter(outliers.index, outliers["1st Dose"], color="red", s=15, label="Outliers")
+ax.set_title("Outlier Detection (Scatter)")
+ax.legend()
+st.pyplot(fig)
 
-# ================= FOOTER =================
-st.success("Full EDA, PCA, Regression & Clustering analysis deployed successfully 🎉")
+# ---- Scatter after removing outliers
+fig, ax = plt.subplots(figsize=(10,4))
+ax.scatter(df_clean.index, df_clean["1st Dose"], s=10)
+ax.set_title("1st Dose after Removing Outliers")
+st.pyplot(fig)
+
+# ---- Histogram
+fig, ax = plt.subplots(figsize=(6,4))
+sns.histplot(df_clean["1st Dose"], bins=30, kde=True, ax=ax)
+ax.set_title("Histogram of 1st Dose (Cleaned)")
+st.pyplot(fig)
+
+# -------------------------------
+# CORRELATION HEATMAP
+# -------------------------------
+st.header("📌 Correlation Heatmap")
+
+numeric_df = df_clean.select_dtypes(include=["int64", "float64"])
+corr = numeric_df.corr()
+
+fig, ax = plt.subplots(figsize=(10,6))
+sns.heatmap(corr, cmap="coolwarm", linewidths=0.5, ax=ax)
+ax.set_title("Correlation Heatmap")
+st.pyplot(fig)
+
+# -------------------------------
+# FEATURE ENGINEERING
+# -------------------------------
+df_clean["Week_End_Num"] = df_clean["Week End"].astype("int64") // 10**9
+df_encoded = pd.get_dummies(
+    df_clean,
+    columns=["Age Group", "Race/Ethnicity"],
+    drop_first=True
+)
+
+X = df_encoded.select_dtypes(include=[np.number]).drop(columns=["1st Dose"])
+y = df_encoded["1st Dose"]
+
+# -------------------------------
+# REGRESSION MODELS
+# -------------------------------
+st.header("📈 Regression Models")
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42
+)
+
+# ---- Linear Regression
+lr = LinearRegression()
+lr.fit(X_train, y_train)
+y_pred_lr = lr.predict(X_test)
+
+# ---- XGBoost
+xgb = XGBRegressor(
+    n_estimators=200,
+    learning_rate=0.1,
+    max_depth=6,
+    eval_metric="rmse"
+)
+xgb.fit(X_train, y_train)
+y_pred_xgb = xgb.predict(X_test)
+
+# ---- Metrics
+st.subheader("Model Evaluation")
+
+st.write("### Linear Regression")
+st.write("MAE:", mean_absolute_error(y_test, y_pred_lr))
+st.write("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred_lr)))
+st.write("R²:", r2_score(y_test, y_pred_lr))
+
+st.write("### XGBoost")
+st.write("MAE:", mean_absolute_error(y_test, y_pred_xgb))
+st.write("RMSE:", np.sqrt(mean_squared_error(y_test, y_pred_xgb)))
+st.write("R²:", r2_score(y_test, y_pred_xgb))
+
+# ---- Actual vs Predicted
+fig, ax = plt.subplots(figsize=(6,5))
+ax.scatter(y_test, y_pred_xgb, alpha=0.5)
+ax.set_xlabel("Actual 1st Dose")
+ax.set_ylabel("Predicted 1st Dose")
+ax.set_title("Actual vs Predicted (XGBoost)")
+st.pyplot(fig)
+
+# -------------------------------
+# PCA
+# -------------------------------
+st.header("🔻 Principal Component Analysis (PCA)")
+
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+pca = PCA()
+X_pca = pca.fit_transform(X_scaled)
+
+fig, ax = plt.subplots(figsize=(7,4))
+ax.plot(
+    range(1, len(pca.explained_variance_ratio_) + 1),
+    np.cumsum(pca.explained_variance_ratio_),
+    marker="o"
+)
+ax.set_title("Cumulative Explained Variance")
+ax.set_xlabel("Components")
+ax.set_ylabel("Variance")
+st.pyplot(fig)
+
+# ---- PCA 2D Scatter
+pca2 = PCA(n_components=2)
+X_pca2 = pca2.fit_transform(X_scaled)
+
+fig, ax = plt.subplots(figsize=(7,5))
+ax.scatter(X_pca2[:,0], X_pca2[:,1], s=10, alpha=0.6)
+ax.set_title("PCA – First Two Components")
+ax.set_xlabel("PC1")
+ax.set_ylabel("PC2")
+st.pyplot(fig)
+
+# -------------------------------
+# CLUSTERING
+# -------------------------------
+st.header("🧩 KMeans Clustering")
+
+kmeans = KMeans(n_clusters=3, random_state=42)
+clusters = kmeans.fit_predict(X_scaled)
+
+fig, ax = plt.subplots(figsize=(7,5))
+ax.scatter(
+    X_pca2[:,0],
+    X_pca2[:,1],
+    c=clusters,
+    cmap="viridis",
+    s=10
+)
+ax.set_title("KMeans Clusters (PCA space)")
+st.pyplot(fig)
+
+st.success("🎉 Full EDA, PCA, Regression & Clustering Analysis Completed!")
